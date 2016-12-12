@@ -15,5 +15,5 @@ All other values are optional:
 * --difficulty; default is 1, used to determine which players can trace the cell.
 
 Examples:
-`NG	31973	14720	139	--display 0	--cell_name "Test Cell"`
-`EW 239200 155390 747926 --description="Interesting looking branch"`
+* `NG	31973	14720	139	--display 0	--cell_name "Test Cell"`
+* `EW 239200 155390 747926 --description="Interesting looking branch"`
