@@ -1,0 +1,11 @@
+{
+    "datasets": {
+        "213": {
+            "cellname_template": "Zebrafish #",
+            "eyewire_dataset": "zfish/",
+            "neuroglancer_layer": "tiles4",
+            "offset": [-13396, -10033, -16384],
+            "segment_id_type": "UInt16"
+        }        
+    }
+}
