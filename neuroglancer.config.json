@@ -1,9 +1,14 @@
 {
     "datasets": {
+	"203": {
+	    "cellname_template": "Pinky 0.1 #",
+	    "eyewire_dataset": "pinky_compressed/",
+            "offset": [0,0,0],
+            "segment_id_type": "UInt16"
+	},
         "213": {
             "cellname_template": "Zebrafish #",
             "eyewire_dataset": "zfish/",
-            "neuroglancer_layer": "tiles4",
             "offset": [-13396, -10033, -16384],
             "segment_id_type": "UInt16"
         }        
