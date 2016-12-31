@@ -11,6 +11,12 @@
             "eyewire_dataset": "zfish/",
             "offset": [-13396, -10033, -16384],
             "segment_id_type": "UInt16"
+        },
+        "216": {
+            "cellname_template": "Zebrafish #",
+            "eyewire_dataset": "zfish/",
+            "offset": [-13396, -10033, -16384],
+            "segment_id_type": "UInt16"
         }        
     }
 }
