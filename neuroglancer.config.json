@@ -3,7 +3,7 @@
         "11": {
             "cellname_template": "Zebrafish #",
             "eyewire_dataset": "zfish/",
-            "offset": [-13396, -10033, -16384],
+            "offset": [-14336, -12288, -16384],
             "segment_id_type": "UInt16"
         }        
     }
