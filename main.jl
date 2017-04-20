@@ -92,14 +92,16 @@ immutable Coords
 end
 
 function parse_user_input(str)
-    args = matchall(r"\"([^\"]*)\"|(\S+)", str)
+    args = matchall(r"(?:(--[^\s=]+)|\"([^\"]+)\"|([^\s=]+))", str)
+    args = map(s -> strip(s, '\"'), args)
 
-    s = ArgParse.ArgParseSettings()
-    ArgParse.@add_arg_table s begin
+    coord_settings = ArgParse.ArgParseSettings()   # For adding cells using Neuroglancer or Eyewire coordinates
+    segment_settings = ArgParse.ArgParseSettings() # For adding cells using Eyewire task and segment IDs
+    ArgParse.@add_arg_table coord_settings begin
         "coord_system"
             help = "Coordinate type, must be NG (Neuroglancer) or EW (Eyewire)"
             required = true
-            arg_type = AbstractString
+            arg_type = String
         "x"
             help = "x coordinate"
             required = true
@@ -114,35 +116,78 @@ function parse_user_input(str)
             arg_type = Int
         "--cell_id"
             help = "The new cell id"
-            arg_type = Int
-            default = 0
+            arg_type = UInt32
+            default = UInt32(0)
         "--cell_name"
             help = "The cell name"
-            arg_type = AbstractString
+            arg_type = String
             default = ""
         "--description"
             help = "A description of the cell"
-            arg_type = AbstractString
+            arg_type = String
             default = ""
         "--threshtype"
             help = "Controls when new tasks are spawned. Don't change unless you know what you are doing."
-            arg_type = AbstractString
+            arg_type = String
             default = "spawnWithOne"
         "--display"
             help = "0 or 1. Specifies whether the cell will be visible in the cell selection menu."
-            arg_type = Int
-            default = 1
+            arg_type = UInt8
+            default = UInt8(1)
         "--detect_duplicates"
             help = "0 or 1. Controls duplicate detection. Don't change unless you know what you are doing."
-            arg_type = Int
-            default = 1
+            arg_type = UInt8
+            default = UInt8(1)
         "--difficulty"
             help = "[1-3. Used to restrict access to cell for certain players. Probably buggy for new datasets. Don't change unless you know what you are doing."
-            arg_type = Int
-            default = 1
+            arg_type = UInt8
+            default = UInt8(1)
     end
 
-    return ArgParse.parse_args(args, s)
+    ArgParse.@add_arg_table segment_settings begin
+        "task_id"
+            help = "Eyewire task ID"
+            required = true
+            arg_type = UInt32
+        "segment_id"
+            help = "Segment ID within the given task."
+            required = true
+            arg_type = UInt32
+        "--cell_id"
+            help = "The new cell id"
+            arg_type = UInt32
+            default = UInt32(0)
+        "--cell_name"
+            help = "The cell name"
+            arg_type = String
+            default = ""
+        "--description"
+            help = "A description of the cell"
+            arg_type = String
+            default = ""
+        "--threshtype"
+            help = "Controls when new tasks are spawned. Don't change unless you know what you are doing."
+            arg_type = String
+            default = "spawnWithOne"
+        "--display"
+            help = "0 or 1. Specifies whether the cell will be visible in the cell selection menu."
+            arg_type = UInt8
+            default = UInt8(1)
+        "--detect_duplicates"
+            help = "0 or 1. Controls duplicate detection. Don't change unless you know what you are doing."
+            arg_type = UInt8
+            default = UInt8(1)
+        "--difficulty"
+            help = "[1-3. Used to restrict access to cell for certain players. Probably buggy for new datasets. Don't change unless you know what you are doing."
+            arg_type = UInt8
+            default = UInt8(1)
+    end
+
+    if isnumber(args[1])
+        return ArgParse.parse_args(args, segment_settings)
+    else
+        return ArgParse.parse_args(args, coord_settings)
+    end
 end
 
 """
@@ -215,6 +260,16 @@ function get_seed(hndl::MySQLHandle, dataset::Dataset, coordinates::Coords)
     return (best_volume, segArray[volume_coordinates[1], volume_coordinates[2], volume_coordinates[3]])
 end
 
+function get_volume(hndl::MySQLHandle, dataset::Dataset, task_id::Unsigned)
+    result = mysql_execute(hndl, "SELECT v.id, v.path FROM volumes v
+                                  JOIN tasks t ON t.segmentation_id = v.id
+                                  WHERE v.dataset = $(dataset.id) AND t.id = $(task_id);")
+    if size(result) == (0,2)
+        return nothing
+    end
+    return [result[1][1], result[2][1]]
+end
+
 """
 `get_duplicates(hndl::MySQLHandle, vol_id::Unsigned, segment_id::Unsigned)`
 
@@ -229,7 +284,7 @@ function get_duplicates(hndl::MySQLHandle, vol_id::Unsigned, segment_id::Unsigne
                                        JOIN tasks t ON v.task_id = t.id
                                        JOIN cells c ON c.id = t.cell
                                        JOIN volumes vol ON vol.id = t.segmentation_id
-                                       WHERE t.status IN (0,10,11) AND v.status = 9 AND vol.id = $(vol_id);")
+                                       WHERE t.status IN (0,10,11) AND v.status = 9 AND c.detect_duplicates = 1 AND vol.id = $(vol_id);")
         segments = JSON.parse(get(row[3]))
         if haskey(segments, string(segment_id))
             push!(duplicates, (row[1], row[2]))
@@ -243,13 +298,18 @@ function spawn_cell(hndl::MySQLHandle, dataset::Dataset, coordinates::Coords;
                     id=0, name="", description="", threshtype="spawnWithOne", display=1, detect_duplicates=1, difficulty=1)
     result = nothing
 
-    volume, segment = get_seed(hndl, dataset, coordinates)
-    if volume == nothing || isnan(segment)
+    volume, seg_id = get_seed(hndl, dataset, coordinates)
+    if volume == nothing || isnan(seg_id)
         println("No volume or segment found for given coordinates.")
         return nothing
     end
 
-    duplicates = get_duplicates(hndl, convert(Unsigned, volume[1]), segment)
+    if seg_id == 0
+        println("Can't spawn cell at Neuroglancer coordinates ($(coordinates.ng_coords[1]), $(coordinates.ng_coords[2]), $(coordinates.ng_coords[3])). Corresponding Segment ID is 0.")
+        return nothing
+    end
+
+    duplicates = get_duplicates(hndl, convert(Unsigned, volume[1]), seg_id)
     if !isempty(duplicates)
         println("Can't spawn cell at Neuroglancer coordinates ($(coordinates.ng_coords[1]), $(coordinates.ng_coords[2]), $(coordinates.ng_coords[3])). One or more duplicate tasks detected:")
         for duplicate in duplicates
@@ -258,7 +318,7 @@ function spawn_cell(hndl::MySQLHandle, dataset::Dataset, coordinates::Coords;
         return nothing
     end
 
-    println("Best match: Volume ID $(volume[1]), $(dataset.hypersquare_bucket)$(volume[2]) with segment $(segment)")
+    println("Best match: Volume ID $(volume[1]), $(dataset.hypersquare_bucket)$(volume[2]) with segment $(seg_id)")
 
     cell_count = get_cell_count(hndl, dataset)
     if name == ""
@@ -293,7 +353,75 @@ function spawn_cell(hndl::MySQLHandle, dataset::Dataset, coordinates::Coords;
         id = result[1][1]
     end
 
-    sql = "CALL task_create_seed($(id), $(segment), '$(volume[2])');";
+    sql = "CALL task_create_seed($(id), $(seg_id), '$(volume[2])');";
+    println(sql)
+    result = mysql_execute(hndl, sql)
+    println(result)
+
+    mysql_execute(hndl, "COMMIT;")
+    return result
+end
+
+function spawn_cell(hndl::MySQLHandle, dataset::Dataset, task_id::UInt32, seg_id::UInt32;
+                    id=0, name="", description="", threshtype="spawnWithOne", display=1, detect_duplicates=1, difficulty=1)
+    result = nothing
+
+    volume = get_volume(hndl, dataset, task_id)
+    if volume == nothing
+        println("No volume found for task ID $(task_id) in dataset $(dataset.name).")
+        return nothing
+    end
+
+    if seg_id == 0
+        println("Invalid segment ID: 0")
+        return nothing
+    end
+
+    duplicates = get_duplicates(hndl, convert(Unsigned, volume[1]), seg_id)
+    if !isempty(duplicates)
+        println("Can't spawn cell using task $(task_id) and segment $(seg_id). One or more duplicate tasks detected:")
+        for duplicate in duplicates
+            println("* Cell $(duplicate[1]), Task $(duplicate[2])")
+        end
+        return nothing
+    end
+
+    println("Best match: Volume ID $(volume[1]), $(dataset.hypersquare_bucket)$(volume[2]) with segment $(seg_id)")
+
+    cell_count = get_cell_count(hndl, dataset)
+    if name == ""
+        name = string(NG_CONF["datasets"][string(dataset.id)]["cellname_template"], cell_count)
+    end
+
+    # Make cell insertion a Transaction, in case something goes wrong
+    mysql_execute(hndl, "START TRANSACTION;")
+
+    sql = "INSERT INTO cells ("
+    if id > 0 sql = string(sql, "id, ") end
+    sql = string(sql, "name, description, threshtype, display, dataset_id, detect_duplicates, difficulty) VALUES (")
+    if id > 0 sql = string(sql, id, ", ") end
+    sql = string(sql, "'", name, "', '", description, "', '", threshtype,"', ", display, ", ", dataset.id, ", ", detect_duplicates, ", ", difficulty, ");")
+
+    println(sql)
+    result = mysql_execute(hndl, sql)
+    println(result)
+
+    if id == 0
+        sql = "SELECT id FROM cells
+               WHERE name = '$(name)' AND threshtype = '$(threshtype)' AND display = $(display) AND
+                     dataset_id = $(dataset.id) AND detect_duplicates = $(detect_duplicates) AND
+                     difficulty = $(difficulty) AND created > NOW() - INTERVAL 1 MINUTE;"
+        
+        result = mysql_execute(hndl, sql)
+        if size(result) != (1,1)
+            println("Couldn't identify newly generated cell! Reverting...")
+            mysql_execute(hndl, "ROLLBACK;")
+            return nothing
+        end
+        id = result[1][1]
+    end
+
+    sql = "CALL task_create_seed($(id), $(seg_id), '$(volume[2])');";
     println(sql)
     result = mysql_execute(hndl, sql)
     println(result)
@@ -343,65 +471,78 @@ end
 
 
 
-
-
 ###############################################
 #                     MAIN                    #
 ###############################################
-
-# Connect to DB
-sql_conn = nothing
-try
-    sql_conn = mysql_connect(SQL_CONF["host"], SQL_CONF["user"], SQL_CONF["password"], SQL_CONF["database"])
-    println("Connection to database established.")
-catch
-    println("Can't connect to database. Make sure you have an open tunnel to one of the db servers and the configuration in mysql.config.json is correct.")
-    println("ssh -fNL 3306:[db_server]:3306 [username]@brainiac2.mit.edu")
-    return
-end
-
-# Load Neuroglancer config
-ng_conf = JSON.parsefile("neuroglancer.config.json")
-
-# List all available datasets
-println("Available Datasets:\nID\tDataset")
-for row in MySQLRowIterator(sql_conn, "SELECT id, name FROM datasets;")
-    println("$(row[1])  $(get(row[2], '-'))")
-end
-
-# Select dataset
-#dataset_id = 213
-dataset_id = parse(UInt, inputline("Choose dataset ID: "))    ### Uncomment to let user select dataset
-
-# Retrieve dataset information from DB
-dataset = get_dataset(sql_conn, dataset_id)
-
-# Request user input
-println("\nPaste coordinates and cell info:")
-println("Format: NG|EW x y z [--cell_id=123] [--cell_name=\"Cell #1\"] [--description=\"\"]")
-println("                    [--threshtype=\"spawnWithOne\"] [--display=1]")
-println("                    [--detect_duplicates=1] [--difficulty=1]")
-println("Example: NG 1234 5678 910 --cell_name=\"Test Cell\" --display=0")
-
-rows = inputlines(">")
-
-println("Processing $(size(rows)) entries")
-for row in rows
-    cell_info = parse_user_input(row)
-    if lowercase(cell_info["coord_system"]) == "ng"
-        coord_system = NEUROGLANCER::COORDINATE_SYSTEM
-    elseif lowercase(cell_info["coord_system"]) == "ew"
-        coord_system = EYEWIRE::COORDINATE_SYSTEM
-    else
-        println("$(cell_info["coord_system"]) is not a valid coordinate system ('ew' or 'ng')")
-        continue
+function main()
+    # Connect to DB
+    sql_conn = nothing
+    try
+        sql_conn = mysql_connect(SQL_CONF["host"], SQL_CONF["user"], SQL_CONF["password"], SQL_CONF["database"])
+        println("Connection to database established.")
+    catch
+        println("Can't connect to database. Make sure you have an open tunnel to one of the db servers and the configuration in mysql.config.json is correct.")
+        println("ssh -fNL 3306:[db_server]:3306 [username]@brainiac2.mit.edu")
+        return
     end
 
-    coords = Coords(dataset, coord_system, [cell_info["x"], cell_info["y"], cell_info["z"]])
-    spawn_cell(sql_conn, dataset, coords;
-        id=cell_info["cell_id"], name=cell_info["cell_name"], description=cell_info["description"],
-        threshtype=cell_info["threshtype"], display=cell_info["display"], detect_duplicates=cell_info["detect_duplicates"],
-        difficulty=cell_info["difficulty"])
+    # Load Neuroglancer config
+    ng_conf = JSON.parsefile("neuroglancer.config.json")
+
+    # List all available datasets
+    println("Available Datasets:\nID\tDataset")
+    for row in MySQLRowIterator(sql_conn, "SELECT id, name FROM datasets;")
+        println("$(row[1])  $(get(row[2], '-'))")
+    end
+
+    # Select dataset
+    #dataset_id = 213
+    dataset_id = parse(UInt, inputline("Choose dataset ID: "))    ### Uncomment to let user select dataset
+
+    # Retrieve dataset information from DB
+    dataset = get_dataset(sql_conn, dataset_id)
+
+    # Request user input
+    println("\nPaste Neuroglancer/Eyewire coordinates and cell info:")
+    println("Format: NG|EW x y z [--cell_id=123] [--cell_name=\"Cell #1\"] [--description=\"\"]")
+    println("                    [--threshtype=\"spawnWithOne\"] [--display=1]")
+    println("                    [--detect_duplicates=1] [--difficulty=1]")
+    println("\nOr an Eyewire task ID, segment ID and cell info:")
+    println("Format: t_id seg_id [--cell_id=123] [--cell_name=\"Cell #1\"] [--description=\"\"]")
+    println("                    [--threshtype=\"spawnWithOne\"] [--display=1]")
+    println("                    [--detect_duplicates=1] [--difficulty=1]")
+    println("\nExample 1: NG 1234 5678 910 --cell_name=\"Test Cell\" --description=\"Soma\"")
+    println("Example 2: 1234567 8910 --cell_name=\"Test Cell\" --description=\"Synapse\"")
+
+    rows = inputlines(">")
+
+    println("Processing $(size(rows)) entries")
+    for row in rows
+        cell_info = parse_user_input(row)
+        if (haskey(cell_info, "task_id"))
+            spawn_cell(sql_conn, dataset, cell_info["task_id"], cell_info["segment_id"];
+                id=cell_info["cell_id"], name=cell_info["cell_name"], description=cell_info["description"],
+                threshtype=cell_info["threshtype"], display=cell_info["display"], detect_duplicates=cell_info["detect_duplicates"],
+                difficulty=cell_info["difficulty"])
+        else
+            if lowercase(cell_info["coord_system"]) == "ng"
+                coord_system = NEUROGLANCER::COORDINATE_SYSTEM
+            elseif lowercase(cell_info["coord_system"]) == "ew"
+                coord_system = EYEWIRE::COORDINATE_SYSTEM
+            else
+                println("$(cell_info["coord_system"]) is not a valid coordinate system ('ew' or 'ng')")
+                continue
+            end
+
+            coords = Coords(dataset, coord_system, [cell_info["x"], cell_info["y"], cell_info["z"]])
+            spawn_cell(sql_conn, dataset, coords;
+                id=cell_info["cell_id"], name=cell_info["cell_name"], description=cell_info["description"],
+                threshtype=cell_info["threshtype"], display=cell_info["display"], detect_duplicates=cell_info["detect_duplicates"],
+                difficulty=cell_info["difficulty"])
+        end
+    end
+
+    mysql_disconnect(sql_conn)
 end
 
-mysql_disconnect(sql_conn)
+main()
