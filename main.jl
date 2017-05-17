@@ -286,6 +286,9 @@ function get_duplicates(hndl::MySQLHandle, vol_id::Unsigned, segment_id::Unsigne
                                        JOIN volumes vol ON vol.id = t.segmentation_id
                                        WHERE t.status IN (0,10,11) AND v.status = 9 AND c.detect_duplicates = 1 AND vol.id = $(vol_id);")
         segments = JSON.parse(get(row[3]))
+        if length(segments) === 0 # hack for [] - not sure where it comes from
+            continue
+        end
         if haskey(segments, string(segment_id))
             push!(duplicates, (row[1], row[2]))
         end
