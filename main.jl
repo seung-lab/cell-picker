@@ -216,9 +216,9 @@ function get_seed(hndl::MySQLHandle, dataset::Dataset, coordinates::Coords)
     shortest_distance::Float32 = Inf
     for row in MySQLRowIterator(hndl, "SELECT id, path, xmin, ymin, zmin, xmax, ymax, zmax FROM volumes
                                        WHERE dataset = $(dataset.id) AND datatype = 2 AND
-                                           $(coordinates.ew_coords[1]) BETWEEN xmin AND xmax AND
-                                           $(coordinates.ew_coords[2]) BETWEEN ymin AND ymax AND
-                                           $(coordinates.ew_coords[3]) BETWEEN zmin AND zmax;")
+                                           $(Float64(coordinates.ew_coords[1])) BETWEEN xmin AND xmax AND
+                                           $(Float64(coordinates.ew_coords[2])) BETWEEN ymin AND ymax AND
+                                           $(Float64(coordinates.ew_coords[3])) BETWEEN zmin AND zmax;") # Float64 removes 'f' in '123.4f'
                         
         volume_center::Vector{Float32} = [0.5 * (get(row[3]) + get(row[6])), 0.5 * (get(row[4]) + get(row[7])), 0.5 * (get(row[5]) + get(row[8]))]
         dist = Distances.chebyshev(coordinates.ew_coords, volume_center)

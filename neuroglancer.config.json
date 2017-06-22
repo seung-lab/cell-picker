@@ -3,8 +3,14 @@
         "11": {
             "cellname_template": "Zebrafish #",
             "eyewire_dataset": "zfish/",
-            "offset": [-14336, -12288, -16384],
+            "offset": [0, 0, 0],
             "segment_id_type": "UInt16"
-        }        
+        },
+        "1": {
+            "cellname_template": "E2198 #",
+            "eyewire_dataset": "e2198_compressed/",
+            "offset": [0, 0, 0],
+            "segment_id_type": "UInt16"
+       }        
     }
 }
