@@ -289,7 +289,7 @@ function get_duplicates(hndl::MySQLHandle, vol_id::Unsigned, segment_id::Unsigne
         if length(segments) === 0 # hack for [] - not sure where it comes from
             continue
         end
-        if haskey(segments, string(segment_id))
+        if haskey(segments, string(segment_id)) && segments[string(segment_id)]>0.41
             push!(duplicates, (row[1], row[2]))
         end
     end
